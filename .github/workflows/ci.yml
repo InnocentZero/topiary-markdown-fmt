@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Run tests
+        run: cargo +stable test --locked --target "$RUST_TARGET"
+
+      - name: Build release binary
+        run: cargo +stable build --locked --release --target "$RUST_TARGET"
+
+      - name: Package binary
+        run: tar -czf "topiary-markdown-${RUST_TARGET}.tar.gz" -C "target/${RUST_TARGET}/release" topiary-markdown
+
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+
+      - name: Test Nix package from the prebuilt archive
+        shell: bash
+        run: |
+          fixture=$(mktemp -d)
+          archive="topiary-markdown-${RUST_TARGET}.tar.gz"
+          cp "$archive" "$fixture/"
+          python3 scripts/nix_release.py "$GITHUB_REPOSITORY" v0.0.0 "$archive" > "$fixture/release.json"
+          package=$(nix build . --override-input release "path:$fixture" --no-write-lock-file --no-link --print-out-paths)
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            readelf -l "$package/bin/topiary-markdown" | grep 'interpreter: /nix/store/'
+          fi
+          diff -u <(printf '# Heading\n') <(printf '#   Heading\n' | "$package/bin/topiary-markdown")
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: topiary-markdown-${{ matrix.target }}
+          path: topiary-markdown-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release binaries
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: publish-binary-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: topiary-markdown-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums and publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archives=(
+            dist/topiary-markdown-x86_64-unknown-linux-gnu.tar.gz
+            dist/topiary-markdown-aarch64-unknown-linux-gnu.tar.gz
+            dist/topiary-markdown-x86_64-apple-darwin.tar.gz
+            dist/topiary-markdown-aarch64-apple-darwin.tar.gz
+          )
+          python3 scripts/nix_release.py "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "${archives[@]}" > dist/release.json
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null; then
+            gh release create "$GITHUB_REF_NAME" "${archives[@]}" dist/release.json --verify-tag --generate-notes --latest
+          fi
+
+      - name: Publish lockable Nix release metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          work=$(mktemp -d)
+          gh auth setup-git
+          git -C "$work" init --initial-branch=nix-release
+          git -C "$work" remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          existing=$(git -C "$work" ls-remote origin refs/heads/nix-release)
+          if [[ -n "$existing" ]]; then
+            git -C "$work" fetch origin refs/heads/nix-release
+            git -C "$work" switch --detach FETCH_HEAD
+          fi
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern release.json --dir "$work" --clobber
+          git -C "$work" add release.json
+          if ! git -C "$work" diff --cached --quiet; then
+            git -C "$work" -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'Update Nix binary release manifest'
+            git -C "$work" push origin HEAD:refs/heads/nix-release
+          fi

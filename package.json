@@ -1,0 +1,6 @@
+{
+  "name": "topiary-markdown-benchmark",
+  "private": true,
+  "type": "module",
+  "devDependencies": { "prettier": "3.10.1" }
+}

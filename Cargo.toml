@@ -1,0 +1,17 @@
+[package]
+name = "topiary-markdown"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pulldown-cmark = { version = "=0.13.6", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+topiary-core = "=0.8.0"
+topiary-queries = { version = "=0.8.0", default-features = false, features = ["markdown"] }
+tree-sitter-md = "=0.5.4"
+unicode-width = "=0.2.2"
+
+[profile.release]
+strip = true

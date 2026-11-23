@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topiary Markdown · Corpus lab</title>
+<style>
+  :root{color-scheme:dark;--bg:#101513;--panel:#19221e;--fg:#e4efe8;--muted:#a9bcb0;--accent:#83e6ad;--line:#35483e}
+  *{box-sizing:border-box} body{margin:0 auto;max-width:1440px;padding:14px clamp(8px,2vw,24px);background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+  h1,h2,p{margin:0 0 .4rem} h1{font-size:clamp(25px,4vw,42px);letter-spacing:-.045em} h2{font-size:20px}
+  header,section{margin-bottom:18px} section{padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .brand,small,.muted{color:var(--muted)} .brand{text-transform:uppercase;letter-spacing:.15em;font-size:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:9px;margin-top:16px}
+  .metric{padding:12px;border:1px solid var(--line);border-radius:8px} strong{display:block;color:var(--accent);font-size:22px}
+  progress{display:block;width:100%;height:16px;margin:8px 0 12px;accent-color:var(--accent)}
+  .matrix{padding:clamp(8px,1.5vw,18px)}
+  #dots{display:block;width:100%;height:min(58svh,34vw,460px);background:var(--bg);border-radius:4px}
+  @media(max-width:650px){#dots{height:min(60svh,100vw)}}
+  .legend{display:flex;gap:1rem;flex-wrap:wrap;margin:5px 0;font-size:12px}
+  .legend i{display:inline-block;width:.63em;height:.63em;border-radius:50%;margin-right:4px;background:var(--key)}
+  table{border-collapse:collapse;width:100%;table-layout:fixed} td,th{text-align:left;border-bottom:1px solid var(--line);padding:7px;overflow-wrap:anywhere} th{color:var(--muted)} td:nth-child(2){width:65%}
+  code{overflow-wrap:anywhere} select{max-width:100%;padding:6px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px}
+</style>
+</head>
+<body>
+<header><p class="brand">Formatter benchmark · Live</p><h1>Topiary Markdown</h1></header>
+<section class="matrix"><select id="runs" aria-label="Benchmark run"><option value="">Latest corpus run</option></select><p id="run" class="muted"></p><canvas id="dots" role="img" aria-label="Pinned Markdown corpus progress"></canvas><div class="legend muted" id="legend"></div><div id="metrics" class="grid"></div></section>
+<section><h2>Live runs</h2><div id="activity"></div><div id="outcomes"></div></section>
+<section><h2>Corpus collection</h2><p id="corpus" class="muted">Waiting for shard manifests…</p><div id="shards" class="grid"></div></section>
+<section><h2>Recent failures</h2><div id="failures"></div></section>
+<small id="updated" aria-live="polite"></small>
+<script>
+const $ = id => document.getElementById(id);
+const num = n => (n ?? 0).toLocaleString();
+const metric = (title, value) => {
+  const div = document.createElement('div'); div.className = 'metric';
+  const strong = document.createElement('strong'); strong.textContent = value;
+  div.append(strong, document.createTextNode(title)); return div;
+};
+const checks = {
+  pass: 'All required checks', formatted: 'Formatted', ast: 'AST preserved', protected: 'Protected bytes',
+  reproducible: 'Independent replay', idempotent: 'Second-pass stable', style: 'Style rules passed',
+  changed: 'Changed files', exact_prettier: 'Exact Prettier match',
+};
+const size = 60000;
+const colors = ['#394841', '#76f2a6', '#eb845f', '#ff5474', '#28dbd5'];
+const names = ['Unchecked', 'Passing', 'Failing', 'Regressed', 'Fixed'];
+let snapshot, states = '', sequence = 0;
+function draw() {
+  const canvas = $('dots'), box = canvas.getBoundingClientRect();
+  const width = Math.round(box.width * devicePixelRatio), height = Math.round(box.height * devicePixelRatio);
+  if (!width || !height) return;
+  canvas.width = width; canvas.height = height;
+  const cols = box.width <= 600 ? 240 : 400;
+  const rows = size / cols, dx = width / cols, dy = height / rows;
+  const ctx = canvas.getContext('2d'), radius = Math.max(.5, Math.min(dx, dy) * .33);
+  const counts = colors.map(() => 0);
+  for (let color = 0; color < colors.length; color++) {
+    ctx.beginPath(); ctx.fillStyle = colors[color];
+    for (let i = 0; i < size; i++) {
+      if ((Number(states[i]) || 0) !== color) continue;
+      counts[color]++;
+      const x = (i % cols + .5) * dx, y = (Math.floor(i / cols) + .5) * dy;
+      ctx.moveTo(x + radius, y); ctx.arc(x, y, radius, 0, 2 * Math.PI);
+    }
+    ctx.fill();
+  }
+  $('legend').replaceChildren(...[1, 2, 3, 4, 0].map(i => {
+    const label = document.createElement('span'), swatch = document.createElement('i');
+    swatch.style.setProperty('--key', colors[i]);
+    label.append(swatch, `${num(counts[i])} ${names[i]}`); return label;
+  }));
+  canvas.setAttribute('aria-label', `60,000 corpus files: ${counts.map((n,i) => `${n} ${names[i].toLowerCase()}`).join(', ')}`);
+}
+async function grid(run) {
+  const token = ++sequence;
+  try {
+    const reply = await fetch(`/api/grid?run=${encodeURIComponent(run)}`);
+    const data = reply.ok ? await reply.text() : '';
+    if (token === sequence && states !== data) { states = data; draw(); }
+  } catch (err) { /* the next status poll will retry */ }
+}
+function render() {
+  const {runs, shards, pinned} = snapshot, selection = $('runs').value;
+  $('runs').replaceChildren(new Option('Live (automatic)', ''), ...runs.map(r => new Option(r.name, r.name)));
+  $('runs').value = runs.some(r => r.name === selection) ? selection : '';
+  $('corpus').textContent = pinned ? `${num(pinned)} unique files pinned · target: 59,000 passing` : 'Collecting toward 60,000 unique files. Shard counts are before global deduplication.';
+  $('shards').replaceChildren(...Object.entries(shards).map(([name, n]) => metric(name, num(n))));
+  const strict = run => run.style_profile?.startsWith('prettier-like-v');
+  const r = runs.find(r => r.name === $('runs').value) ?? runs.find(r => strict(r) && r.state === 'running') ?? runs.find(r => strict(r) && r.total === pinned) ?? runs.find(r => r.total === pinned) ?? runs[0];
+  if (!r) { $('run').textContent = 'No measurements yet.'; $('failures').textContent = 'No benchmark started.'; return; }
+  const disclaimer = strict(r) ? ` · stricter style audit ${r.style_profile.split('-').pop()}` : ' · preliminary style checks only (not acceptance)';
+  const coverage = pinned && r.total !== pinned ? ` · targeted run (${num(pinned - r.total)} outside this run)` : '';
+  $('run').textContent = `${r.name} · ${r.state} · ${num(r.done)} / ${num(r.total)} checked · ${r.revision.slice(0,12)}${r.upstream ? ' · stock Topiary baseline' : ''}${disclaimer}${coverage}`;
+  grid(r.name);
+  const cards = Object.entries(checks).map(([key, label]) => metric(label, key in r.denominators ? `${num(r.checks[key])} / ${num(r.denominators[key])}` : '—'));
+  if (r.distance_max_sum) cards.push(metric('Prettier normalized line distance', `${(100*r.distance_sum/r.distance_max_sum).toFixed(2)}%`));
+  if (r.compared_binary_sha256) {
+    cards.push(metric('Regression files', num(r.regressions)), metric('Files gaining a check', num(r.improvements)));
+    if ('fixed' in r) cards.push(metric('Newly passing files', num(r.fixed)));
+  }
+  if (r.verifier_binary_sha256) cards.push(metric('Pinned AST verifier', r.verifier_binary_sha256.slice(0, 12)));
+  for (const [rule, n] of Object.entries(r.style_issues ?? {}).sort((a, b) => b[1] - a[1]).slice(0, 5)) cards.push(metric(rule + ' failures', num(n)));
+  $('metrics').replaceChildren(...cards);
+  const active = document.createElement('table');
+  for (const run of runs.filter(run => run.state === 'running' || run.name === r.name || run.compared_binary_sha256)) {
+    const row = active.insertRow(); row.insertCell().textContent = run.name;
+    row.insertCell().textContent = `${run.state} · ${num(run.done)} / ${num(run.total)} · ${num(run.checks.pass)} passing${run.compared_binary_sha256 ? ` · ${num(run.regressions)} regressions · ${num(run.improvements)} improved` : ''}`;
+  }
+  $('activity').replaceChildren(active);
+  const outcomes = document.createElement('table');
+  for (const file of (r.recent_results || [])) {
+    const row = outcomes.insertRow(), verdict = row.insertCell();
+    verdict.textContent = names[file.verdict]; verdict.style.color = colors[file.verdict];
+    row.insertCell().textContent = `${file.repo}/${file.path}`; row.title = file.reason;
+  }
+  $('outcomes').replaceChildren(outcomes);
+  const table = document.createElement('table');
+  for (const f of r.recent_failures) {
+    const row = table.insertRow(); row.insertCell().textContent = f.reason;
+    const cell = row.insertCell(); cell.textContent = `${f.repo}/${f.path}`; cell.title = f.sha256;
+  }
+  $('failures').replaceChildren(r.recent_failures.length ? table : document.createTextNode('None recorded.'));
+}
+$('runs').addEventListener('change', render);
+new ResizeObserver(draw).observe($('dots'));
+draw();
+async function refresh() {
+  try { const r = await fetch('/api/status'); if(!r.ok) throw Error(r.status); snapshot = await r.json(); render(); $('updated').textContent = `Live · refreshed ${new Date().toLocaleTimeString()}`; }
+  catch (err) { $('updated').textContent = `Disconnected · retrying (${err})`; }
+}
+refresh(); setInterval(refresh, 600);
+</script>
+</body>
+</html>
