@@ -1,0 +1,10 @@
+{
+  "hashes": {
+    "aarch64-apple-darwin": "sha256-Vvmw4udHmxKH+YZzJWGIWB7M1If9bcIM/gBMyyGCs5A=",
+    "aarch64-unknown-linux-gnu": "sha256-VogTBJWou0QSOA5CWCNql7DhP0Ti1s2+t65uy3YJUC8=",
+    "x86_64-apple-darwin": "sha256-ATeh19MqrhkdBH0C7i8S446RD6EKb5lTzhTwxGs5qJU=",
+    "x86_64-unknown-linux-gnu": "sha256-SP0fUQPMw6QUIGRGdLSEkC/kdwCgGNA+3cB0CGs0z4g="
+  },
+  "repository": "InnocentZero/topiary-markdown-fmt",
+  "tag": "v0.1.0"
+}
