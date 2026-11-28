@@ -58,6 +58,19 @@ jobs:
           fi
           diff -u <(printf '# Heading\n') <(printf '#   Heading\n' | "$package/bin/topiary-markdown")
 
+          mkdir "$fixture/unused-nixpkgs"
+          printf '{ outputs = _: throw "standalone nixpkgs was evaluated"; }\n' > "$fixture/unused-nixpkgs/flake.nix"
+          name=$(nix eval .#lib.mkPackage --impure --no-write-lock-file --raw \
+            --override-input release "path:$fixture" \
+            --override-input nixpkgs "path:$fixture/unused-nixpkgs" \
+            --apply 'mkPackage: (mkPackage {
+              stdenv.hostPlatform = { system = builtins.currentSystem; isLinux = false; };
+              lib = { removePrefix = _: tag: builtins.substring 1 (-1) tag; optionals = _: _: []; };
+              stdenvNoCC.mkDerivation = attrs: attrs;
+              fetchurl = attrs: attrs;
+            }).src.name')
+          test "$name" = "$archive"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: topiary-markdown-${{ matrix.target }}

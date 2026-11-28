@@ -38,8 +38,9 @@ nix run --no-write-lock-file github:InnocentZero/topiary-markdown-fmt -- --help
 ```
 
 In a NixOS or Home Manager flake, add this repository as input
-`topiary-markdown`, use `inputs.topiary-markdown.packages.${system}.default`,
-and update with `nix flake update topiary-markdown`.
+`topiary-markdown` and set `inputs.topiary-markdown.inputs.nixpkgs.follows = "nixpkgs"`.
+Add `(inputs.topiary-markdown.lib.mkPackage pkgs)` to your package list. Update the
+formatter with `nix flake update topiary-markdown`.
 
 ### From source
 
